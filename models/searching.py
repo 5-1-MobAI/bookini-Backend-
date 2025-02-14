@@ -16,30 +16,32 @@ model = ChatGoogleGenerativeAI(
     max_retries=int(os.getenv("GENAI_MAX_RETRIES", 5)),
 )
 
-# Prompt the user for a description of the desired book
-user_query = input("Enter a brief description of the book you want: ")
+def generate_recommendations(user_query):
+    """
+    Generate book recommendations using the Gemini model.
+    Returns a list of dictionaries with 'title' and 'author'.
+    """
+    prompt = (
+        f"You are a helpful book recommendation assistant. The user is looking for a book described as: '{user_query}'.\n\n"
+        "Please provide a markdown table with two columns: 'Title' and 'Author'. "
+        "Return only the table without any extra commentary. Give me 5 books."
+    )
 
-# Build a prompt for the model to return a markdown table of 5 book recommendations.
-prompt = (
-    f"You are a helpful book recommendation assistant. The user is looking for a book described as: '{user_query}'.\n\n"
-    "Please provide a markdown table with two columns: 'Title' and 'Author'. "
-    "Return only the table without any extra commentary. Give me 5 books."
-)
+    # Generate the recommendations using the model
+    result = model.invoke(prompt)
+    table_text = result.content.strip()
 
-# Generate the recommendations using the model
-result = model.invoke(prompt)
-table_text = result.content.strip()
-# Parse the markdown table into a list of dictionaries.
-lines = table_text.split('\n')
-if len(lines) < 3:
-    recommended_books = []
-else:
-    recommended_books = []
-    for line in lines[2:]:
-        # Split by '|' and remove empty strings and extra whitespace
-        parts = [part.strip() for part in line.split('|') if part.strip()]
-        if len(parts) >= 2:
-            recommended_books.append({"title": parts[0], "author": parts[1]})
+    # Parse the markdown table into a list of dictionaries
+    lines = table_text.split('\n')
+    if len(lines) < 3:
+        return []
+    else:
+        recommended_books = []
+        for line in lines[2:]:  # Skip the header and separator lines
+            parts = [part.strip() for part in line.split('|') if part.strip()]
+            if len(parts) >= 2:
+                recommended_books.append({"title": parts[0], "author": parts[1]})
+        return recommended_books
 
 def fetch_book_details(title):
     """
@@ -73,13 +75,20 @@ def fetch_book_details(title):
             return details
     return None
 
-# Fetch detailed information for each recommended book
-book_details_list = []
-for book in recommended_books:
-    details = fetch_book_details(book["title"])
-    if details:
-        book_details_list.append(details)
+def main_search(user_query):
+    """
+    Main function to handle the entire search process.
+    Takes a user query, generates recommendations, fetches details, and returns the results.
+    """
+    # Step 1: Generate book recommendations
+    recommended_books = generate_recommendations(user_query)
 
-# Output the fetched book details in JSON format
-if book_details_list:
-    print(json.dumps(book_details_list, indent=2))
+    # Step 2: Fetch detailed information for each recommended book
+    book_details_list = []
+    for book in recommended_books:
+        details = fetch_book_details(book["title"])
+        if details:
+            book_details_list.append(details)
+
+    # Step 3: Return the fetched book details
+    return book_details_list
