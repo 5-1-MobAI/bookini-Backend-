@@ -1,0 +1,5 @@
+add a .env file (found in telegram)
+add a firebase_credintials.json in config 
+modify the variables path in .env 
+
+DONT commit the firebase_credintials.json file in config ! 
