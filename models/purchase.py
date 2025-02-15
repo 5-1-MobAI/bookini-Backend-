@@ -2,12 +2,19 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 import os
+import sys
 import requests
 import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from typing import Dict, List, Optional, Tuple
 import re
+
+# Import ChromaDB functions
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.config import chat_collection
+from sentence_transformers import SentenceTransformer
+import uuid
 
 # Load environment variables
 load_dotenv()
@@ -27,11 +34,34 @@ model = ChatGoogleGenerativeAI(
     max_retries=int(os.getenv("GENAI_MAX_RETRIES", 5)),
 )
 
-chat_history = []  # Use a list to store messages
+# Initialize SentenceTransformer for embeddings
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Initial system message (optional)
-system_message = SystemMessage(content="You are a helpful AI assistant that helps users find and purchase books.")
-chat_history.append(system_message)
+def save_chat(user_id, message, role="user"):
+    chat_id = str(uuid.uuid4())  # Generate a unique chat ID
+    embedding = embedding_model.encode(message).tolist()
+
+    # Store chat message in ChromaDB
+    chat_collection.add(
+        ids=[chat_id], 
+        embeddings=[embedding], 
+        metadatas=[{"user_id": user_id, "message": message, "role": role}]
+    )
+
+def get_chat_history(user_id, limit=1000):
+    # Query ChromaDB for the last 'limit' messages from the user
+    results = chat_collection.query(
+        query_embeddings=[[0] * embedding_model.get_sentence_embedding_dimension()],  # Dummy query vector
+        n_results=limit
+    )
+    
+    # Filter results to return only messages from the specified user
+    chat_history = [
+        metadata for metadata in results["metadatas"][0]
+        if metadata["user_id"] == user_id
+    ]
+
+    return chat_history
 
 def parse_user_request(request_text: str) -> Dict:
     """
@@ -156,6 +186,12 @@ def handle_user_request(user_id: str, request_text: str) -> Dict:
     Main function to handle user requests.
     If the request is about buying books, process it. Otherwise, respond normally.
     """
+    # Save the user's message to ChromaDB
+    save_chat(user_id, request_text, role="user")
+
+    # Retrieve the chat history from ChromaDB
+    chat_history = get_chat_history(user_id, limit=1000)
+
     parsed_request = parse_user_request(request_text)
     
     if parsed_request["quantity"] > 0 and parsed_request["topic"] != "Null":
@@ -169,6 +205,7 @@ def handle_user_request(user_id: str, request_text: str) -> Dict:
 
         if not found_books:
             response = f"I couldn't find any books about '{topic}'. Please try a different topic."
+            save_chat(user_id, response, role="assistant")
             return {"message": response, "books": [], "purchase_details": []}
         
         # Get user details from Firebase
@@ -196,6 +233,7 @@ def handle_user_request(user_id: str, request_text: str) -> Dict:
             })
 
         response = f"You can now go to the basket to confirm payment."
+        save_chat(user_id, response, role="assistant")
         return {
             "message": response,
             "requested_quantity": quantity,
@@ -207,6 +245,7 @@ def handle_user_request(user_id: str, request_text: str) -> Dict:
         # This is a normal conversation request
         result = model.invoke(request_text)
         response = result.content
+        save_chat(user_id, response, role="assistant")
         return {"message": response, "books": [], "purchase_details": []}
     
 
@@ -214,16 +253,14 @@ def test_purchase_function():
     """
     Test function to demonstrate the book purchase functionality
     """
-    test_user_id = "test_user_123"
+    test_user_id = "user_001"
     while True:
         query = input("You: ")
         if query.lower() == "exit":
             break
-        chat_history.append(HumanMessage(content=query))
 
         result = handle_user_request(test_user_id, query)
         response = result.get("message", "An error occurred while processing your request.")
-        chat_history.append(AIMessage(content=response))
         print(f"AI: {response}")
 
         if result.get("found_books"):
@@ -236,7 +273,7 @@ def test_purchase_function():
             print(json.dumps(result["purchase_details"], indent=2))
 
     print("---- Message History ----")
-    print(chat_history)
+    print(get_chat_history(test_user_id, limit=10))
 
 if __name__ == "__main__":
     test_purchase_function()
