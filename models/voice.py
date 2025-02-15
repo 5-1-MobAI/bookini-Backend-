@@ -3,11 +3,11 @@ from gtts import gTTS
 import pygame
 import tempfile
 import os
-import json
-import time
-from threading import Thread
 import queue
 import sys
+import requests
+from typing import Dict, Optional
+from models.searching import generate_recommendations
 
 class VoiceQueryHandler:
     def __init__(self, handle_user_request_func):
@@ -56,10 +56,12 @@ class VoiceQueryHandler:
                 pygame.time.Clock().tick(10)
             
             pygame.mixer.music.unload()
-            os.unlink(temp_filename)
-            
+        
         except Exception as e:
             print(f"Error in text-to-speech: {str(e)}")
+        finally:
+            if os.path.exists(temp_filename):
+                os.unlink(temp_filename)
     
     def handle_voice_interaction(self, user_id):
         self._speak("Hello! How can I help you find books today?")
@@ -130,18 +132,40 @@ class VoiceQueryHandler:
             else:
                 self._speak("I didn't catch that. Please say yes or no.")
 
-
-def main_voice():
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from purchase import handle_user_request
-    
-    voice_handler = VoiceQueryHandler(handle_user_request)
-    test_user_id = "test_user_123"
+def fetch_book_details(title: str) -> Optional[Dict]:
+    url = "https://www.googleapis.com/books/v1/volumes"
+    params = {'q': title, 'key': os.getenv("GOOGLE_BOOKS_API_KEY", "")}
     
     try:
-        voice_handler.handle_voice_interaction(test_user_id)
-    except KeyboardInterrupt:
-        print("\nVoice interaction terminated by user.")
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        if "items" not in data:
+            return None
+        
+        volume_info = data["items"][0].get("volumeInfo", {})
+        sale_info = data["items"][0].get("saleInfo", {})
+        
+        details = {
+            "title": volume_info.get("title", "N/A"),
+            "author": ", ".join(volume_info.get("authors", [])) if volume_info.get("authors") else "N/A",
+            "publisher": volume_info.get("publisher", "N/A"),
+            "published_date": volume_info.get("publishedDate", "N/A"),
+            "description": volume_info.get("description", "N/A"),
+            "thumbnail": volume_info.get("imageLinks", {}).get("thumbnail", "N/A"),
+            "categories": ", ".join(volume_info.get("categories", [])) if volume_info.get("categories") else "N/A",
+            "price": sale_info.get("listPrice", {}).get("amount", "N/A")
+        }
+        return details
+        
     except Exception as e:
-        print(f"Error in voice interaction: {str(e)}")
+        print(f"Error fetching book details: {str(e)}")
+        return None
 
+if __name__ == "__main__":
+    def mock_handle_user_request(user_id, query):
+        return {"found_books": [{"title": "Sample Book", "author": "John Doe"}], "purchase_details": None}
+    
+    voice_assistant = VoiceQueryHandler(mock_handle_user_request)
+    voice_assistant.handle_voice_interaction("test_user")

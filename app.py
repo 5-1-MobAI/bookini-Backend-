@@ -2,8 +2,10 @@ from flask import Flask, request, jsonify
 import sys 
 import os
 import threading
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from chat_storage import save_chat, get_chat_history
 from models.recommender import main_recommender
 from models.purchase import (
@@ -16,11 +18,12 @@ from models.purchase import (
     get_price_info
 )
 from models.searching import main_search
-from models.voice import main_voice
 from flasgger import Swagger
 from flask_cors import CORS
 import firebase_admin
 from firebase_admin import credentials, firestore
+from models.voice import VoiceQueryHandler
+from models.searching import generate_recommendations
 
 # Initialize Firebase
 if not firebase_admin._apps:  # Prevent reinitialization error
@@ -197,12 +200,32 @@ def chat():
         # This is a normal conversation request
         return jsonify({"message": response, "books": [], "purchase_details": []})
 
+
 @app.route('/start-voice', methods=['GET'])
 def start_voice():
     """API route to start the voice interaction in a separate thread"""
-    thread = threading.Thread(target=main_voice)
-    thread.start()
-    return jsonify({"message": "Voice interaction started"}), 200
+    try:
+        thread = threading.Thread(target=main_voice)
+        thread.daemon = True  # Daemonize thread to allow graceful shutdown
+        thread.start()
+        return jsonify({"message": "Voice interaction started"}), 200
+    except Exception as e:
+        logging.error(f"Error starting voice interaction: {str(e)}")
+        return jsonify({"error": "Failed to start voice interaction"}), 500
+    
+
+voice_assistant = VoiceQueryHandler(lambda user_id, query: {"found_books": generate_recommendations(user_id, query)})
+
+## done (voice)
+@app.route("/start-voice-assistant")
+def start_voice_assistant():
+    user_id = request.args.get("user_id")  # Get user_id from query parameters
+    if not user_id:
+        return "Error: user_id parameter is required.", 400  # Return error if not provided
+    voice_assistant.handle_voice_interaction(user_id)
+    return f"Voice assistant session started for user {user_id}."
+
+
 
 
 if __name__ == '__main__':
