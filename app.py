@@ -22,7 +22,7 @@ from flasgger import Swagger
 from flask_cors import CORS
 import firebase_admin
 from firebase_admin import credentials, firestore
-from models.voice import VoiceQueryHandler
+from models.voice import VoiceQueryHandler, main_voice
 from models.searching import generate_recommendations
 
 # Initialize Firebase

@@ -162,6 +162,10 @@ def fetch_book_details(title: str) -> Optional[Dict]:
     except Exception as e:
         print(f"Error fetching book details: {str(e)}")
         return None
+    
+def main_voice():
+    handler = VoiceQueryHandler(lambda user_id, query: {"found_books": generate_recommendations(user_id, query)})
+    handler.handle_voice_interaction("test_user")    
 
 if __name__ == "__main__":
     def mock_handle_user_request(user_id, query):
